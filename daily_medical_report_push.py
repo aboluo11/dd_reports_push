@@ -422,8 +422,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--dry-run", action="store_true", help="只查询并打印，不发送钉钉")
     parser.add_argument("--json", action="store_true", help="结束时输出 JSON 结果")
     parser.add_argument("--schedule", action="store_true", help="常驻进程，每天定时执行")
-    parser.add_argument("--hour", type=int, default=14, help="定时小时，默认 8")
-    parser.add_argument("--minute", type=int, default=59, help="定时分钟，默认 0")
+    parser.add_argument("--hour", type=int, default=15, help="定时小时，默认 8")
+    parser.add_argument("--minute", type=int, default=3, help="定时分钟，默认 0")
     parser.add_argument("--timeout", type=int, default=6000, help="子进程超时时间（秒），默认 6000")
     return parser
 
