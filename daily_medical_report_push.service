@@ -5,6 +5,7 @@ Wants=network-online.target
 
 [Service]
 User=sdy
+Environment="LD_LIBRARY_PATH=/home/sdy/tools/instantclient-basic-linux.x64-23.8.0.25.04/instantclient_23_8/:$LD_LIBRARY_PATH"
 WorkingDirectory=/home/sdy/dev/projects/dd_reports_push
 ExecStart=/home/sdy/dev/projects/dd_reports_push/.venv/bin/python -u daily_medical_report_push.py --schedule
 KillSignal=SIGKILL

@@ -31,11 +31,8 @@ import requests
 
 from async_process_runner import AsyncProcessRunner
 
-try:
-    import oracledb
-except ImportError as exc:  # pragma: no cover
-    raise SystemExit("缺少依赖 oracledb，请先安装：pip install oracledb requests pysocks") from exc
-
+import oracledb
+oracledb.init_oracle_client()
 
 # ===================== 写死的运行配置 =====================
 SHANGHAI_TZ = ZoneInfo("Asia/Shanghai")
@@ -240,15 +237,6 @@ def to_int(value: Any) -> int:
     return int(value)
 
 
-def init_oracle_client() -> None:
-    """优先使用 thick mode；如果已经初始化或本机无客户端，尽量继续让 thin mode 尝试连接。"""
-    try:
-        oracledb.init_oracle_client()
-    except Exception as exc:
-        # 已初始化或无 Oracle Client 时不要提前退出，让 connect 报更明确的错误。
-        log(f"Oracle Client 初始化提示：{exc}")
-
-
 def fetch_one_dict(conn: oracledb.Connection, sql: str, report_date: str) -> dict[str, Any]:
     with conn.cursor() as cursor:
         cursor.execute(sql, report_date=report_date)
@@ -267,8 +255,6 @@ def fetch_all_dicts(conn: oracledb.Connection, sql: str, report_date: str) -> li
 
 
 def query_report(report_date: str) -> dict[str, Any]:
-    init_oracle_client()
-    log(f"连接 HIS Oracle：{ORACLE_DSN}")
     with oracledb.connect(user=ORACLE_USER, password=ORACLE_PASSWORD, dsn=ORACLE_DSN) as conn:
         log("查询手术量/分娩量/日间手术量")
         surgery = fetch_one_dict(conn, SURGERY_SQL, report_date)
@@ -423,7 +409,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--json", action="store_true", help="结束时输出 JSON 结果")
     parser.add_argument("--schedule", action="store_true", help="常驻进程，每天定时执行")
     parser.add_argument("--hour", type=int, default=15, help="定时小时，默认 8")
-    parser.add_argument("--minute", type=int, default=17, help="定时分钟，默认 0")
+    parser.add_argument("--minute", type=int, default=22, help="定时分钟，默认 0")
     parser.add_argument("--timeout", type=int, default=6000, help="子进程超时时间（秒），默认 6000")
     return parser
 
