@@ -4,9 +4,9 @@ After=network-online.target
 Wants=network-online.target
 
 [Service]
-User=cdsw
-WorkingDirectory=/home/cdsw/dev/projects/dd_reports_push
-ExecStart=/home/cdsw/dev/projects/dd_reports_push/.venv/bin/python -u daily_medical_report_push.py --schedule
+User=sdy
+WorkingDirectory=/home/sdy/dev/projects/dd_reports_push
+ExecStart=/home/sdy/dev/projects/dd_reports_push/.venv/bin/python -u daily_medical_report_push.py --schedule
 KillSignal=SIGKILL
 
 [Install]
