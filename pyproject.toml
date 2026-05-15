@@ -1,0 +1,11 @@
+[project]
+name = "dd-reports-push"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "oracledb>=4.0.0",
+    "pysocks>=1.7.1",
+    "requests>=2.34.2",
+]

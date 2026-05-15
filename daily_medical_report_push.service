@@ -1,0 +1,13 @@
+[Unit]
+Description=daily_medical_report_push
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=cdsw
+WorkingDirectory=/home/cdsw/dev/projects/dd_reports_push
+ExecStart=/home/cdsw/dev/projects/dd_reports_push/.venv/bin/python -u daily_medical_report_push.py --schedule
+KillSignal=SIGKILL
+
+[Install]
+WantedBy=multi-user.target
