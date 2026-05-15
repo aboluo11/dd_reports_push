@@ -48,7 +48,7 @@ DINGTALK_ROBOT_CODE = "dingltywmtwpagzinyjz"
 DINGTALK_PROXY_URL = "socks5h://172.16.4.160:1080"
 
 # 默认接收人 userid。参考 morning_meeting 里“发给自己”的 userid；如需换人用 --userid 覆盖。
-DEFAULT_RECEIVER_USERIDS = "215944441533346540"
+DEFAULT_RECEIVER_USERIDS = "215944441533346540,19303350101213213"
 
 # HIS Oracle 连接配置（参考 /home/cdsw/dev/projects/morning_meeting）
 ORACLE_USER = "HMISW2003"
@@ -408,8 +408,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--dry-run", action="store_true", help="只查询并打印，不发送钉钉")
     parser.add_argument("--json", action="store_true", help="结束时输出 JSON 结果")
     parser.add_argument("--schedule", action="store_true", help="常驻进程，每天定时执行")
-    parser.add_argument("--hour", type=int, default=15, help="定时小时，默认 8")
-    parser.add_argument("--minute", type=int, default=22, help="定时分钟，默认 0")
+    parser.add_argument("--hour", type=int, default=8, help="定时小时，默认 8")
+    parser.add_argument("--minute", type=int, default=0, help="定时分钟，默认 0")
     parser.add_argument("--timeout", type=int, default=6000, help="子进程超时时间（秒），默认 6000")
     return parser
 
