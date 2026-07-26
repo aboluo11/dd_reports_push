@@ -270,6 +270,14 @@ WITH valid_ops AS (
           NVL(surgeon_emp.NAME, '~'),
           '演练'
       ) = 0
+      AND INSTR(
+          UPPER(
+              NVL(patient.NAME, '~') || NVL(ward.NAME, '~') ||
+              NVL(request_ward.NAME, '~') || NVL(input_emp.NAME, '~') ||
+              NVL(surgeon_emp.NAME, '~')
+          ),
+          'CESHI'
+      ) = 0
       AND NVL(input_emp.CODE, '~') <> '999'
       AND NVL(surgeon_emp.CODE, '~') <> '999'
 )
@@ -310,6 +318,11 @@ WHERE patient.DATE_OF_BIRTH >= TO_DATE(:report_date, 'YYYY-MM-DD')
   AND TRIM(baby.VISIT_NO) LIKE '%B1%'
   AND ward.BRANCH_CODE IN ('00', '01')
   AND dept.NAME NOT IN ('特需产科一体化中心（北）', '特需产科病区(南)')
+  AND INSTR(NVL(patient.NAME, '~') || NVL(ward.NAME, '~') || NVL(dept.NAME, '~'), '测试') = 0
+  AND INSTR(NVL(patient.NAME, '~') || NVL(ward.NAME, '~') || NVL(dept.NAME, '~'), '考核') = 0
+  AND INSTR(NVL(patient.NAME, '~') || NVL(ward.NAME, '~') || NVL(dept.NAME, '~'), '演练') = 0
+  AND INSTR(UPPER(NVL(patient.NAME, '~') || NVL(ward.NAME, '~') || NVL(dept.NAME, '~')), 'CESHI') = 0
+  AND NVL(dept.CODE, '~') <> '001'
 """
 
 
@@ -326,6 +339,11 @@ WITH bed_usage AS (
     WHERE stats.STATISTICS_DATE >= TO_DATE(:report_date, 'YYYY-MM-DD')
       AND stats.STATISTICS_DATE < TO_DATE(:report_date, 'YYYY-MM-DD') + 1
       AND ward.BRANCH_CODE IN ('00', '01')
+      AND INSTR(NVL(ward.NAME, '~') || NVL(dept.NAME, '~'), '测试') = 0
+      AND INSTR(NVL(ward.NAME, '~') || NVL(dept.NAME, '~'), '考核') = 0
+      AND INSTR(NVL(ward.NAME, '~') || NVL(dept.NAME, '~'), '演练') = 0
+      AND INSTR(UPPER(NVL(ward.NAME, '~') || NVL(dept.NAME, '~')), 'CESHI') = 0
+      AND NVL(dept.CODE, '~') <> '001'
 )
 SELECT
     NVL(SUM(SJCW), 0) AS 全院床位使用,
@@ -372,6 +390,11 @@ JOIN WDHIS.PAT_REGISTER patient
  AND NVL(patient.IS_INVALID, 0) = 0
  AND TRIM(patient.PAT_NO) IS NOT NULL
 JOIN WDHIS.PUB_DIC_REG_TYPE reg_type ON reg_type.ID = reg.REG_TYPE
+JOIN WDHIS.PUB_REG_DEPT reg_dept ON reg_dept.ID = reg.REG_DEPT
+LEFT JOIN WDHIS.PUB_DEPT org_dept ON org_dept.ID = reg_dept.DEPT_ID
+LEFT JOIN WDHIS.PUB_EMP reg_input_emp ON reg_input_emp.ID = reg.REG_INPUT_EMPID
+LEFT JOIN WDHIS.PUB_EMP reg_emp ON reg_emp.ID = reg.REG_EMPID
+LEFT JOIN WDHIS.PUB_EMP doctor ON doctor.ID = reg.DOC_EMPID
 WHERE reg.REG_DATE >= TO_DATE(:report_date, 'YYYY-MM-DD')
   AND reg.REG_DATE < TO_DATE(:report_date, 'YYYY-MM-DD') + 1
   AND reg.BRANCH_CODE IN ('00', '01')
@@ -379,6 +402,41 @@ WHERE reg.REG_DATE >= TO_DATE(:report_date, 'YYYY-MM-DD')
   AND reg.INVALID_TIME IS NULL
   AND NVL(reg.IS_BACK, 0) = 0
   AND reg.REG_DEPT <> 0
+  AND INSTR(
+      NVL(patient.NAME, '~') || NVL(reg_type.NAME, '~') ||
+      NVL(reg_dept.NAME, '~') || NVL(org_dept.NAME, '~') ||
+      NVL(reg_input_emp.NAME, '~') || NVL(reg_emp.NAME, '~') ||
+      NVL(doctor.NAME, '~'),
+      '测试'
+  ) = 0
+  AND INSTR(
+      NVL(patient.NAME, '~') || NVL(reg_type.NAME, '~') ||
+      NVL(reg_dept.NAME, '~') || NVL(org_dept.NAME, '~') ||
+      NVL(reg_input_emp.NAME, '~') || NVL(reg_emp.NAME, '~') ||
+      NVL(doctor.NAME, '~'),
+      '考核'
+  ) = 0
+  AND INSTR(
+      NVL(patient.NAME, '~') || NVL(reg_type.NAME, '~') ||
+      NVL(reg_dept.NAME, '~') || NVL(org_dept.NAME, '~') ||
+      NVL(reg_input_emp.NAME, '~') || NVL(reg_emp.NAME, '~') ||
+      NVL(doctor.NAME, '~'),
+      '演练'
+  ) = 0
+  AND INSTR(
+      UPPER(
+          NVL(patient.NAME, '~') || NVL(reg_type.NAME, '~') ||
+          NVL(reg_dept.NAME, '~') || NVL(org_dept.NAME, '~') ||
+          NVL(reg_input_emp.NAME, '~') || NVL(reg_emp.NAME, '~') ||
+          NVL(doctor.NAME, '~')
+      ),
+      'CESHI'
+  ) = 0
+  AND NVL(reg_type.CODE, '~') <> '99'
+  AND NVL(org_dept.CODE, '~') <> '001'
+  AND NVL(reg_input_emp.CODE, '~') <> '999'
+  AND NVL(reg_emp.CODE, '~') <> '999'
+  AND NVL(doctor.CODE, '~') <> '999'
 GROUP BY reg.BRANCH_CODE
 ORDER BY CASE reg.BRANCH_CODE WHEN '01' THEN 0 ELSE 1 END
 """
@@ -462,11 +520,24 @@ def fetch_authoritative_new_his_visit_nos(
             placeholders = ", ".join(f":{name}" for name in binds)
             cursor.execute(
                 f"""
-SELECT TRIM(VISIT_NO)
-FROM WDHIS.CIS_IN_PAT_REG
-WHERE NVL(IS_INVALID, 0) = 0
-  AND BRANCH_CODE IN ('00', '01')
-  AND TRIM(VISIT_NO) IN ({placeholders})
+SELECT TRIM(reg.VISIT_NO)
+FROM WDHIS.CIS_IN_PAT_REG reg
+JOIN WDHIS.PAT_REGISTER patient
+  ON patient.REG_ID = reg.VISIT_ID
+ AND patient.PAT_ID = reg.PAT_ID
+ AND patient.SOURCE_TYPE = 2
+ AND patient.BRANCH_CODE = reg.BRANCH_CODE
+ AND NVL(patient.IS_INVALID, 0) = 0
+JOIN WDHIS.PUB_WARD ward ON ward.ID = reg.WARD_ID
+JOIN WDHIS.PUB_DEPT dept ON dept.ID = reg.DEPT_ID
+WHERE NVL(reg.IS_INVALID, 0) = 0
+  AND reg.BRANCH_CODE IN ('00', '01')
+  AND TRIM(reg.VISIT_NO) IN ({placeholders})
+  AND INSTR(NVL(patient.NAME, '~') || NVL(ward.NAME, '~') || NVL(dept.NAME, '~'), '测试') = 0
+  AND INSTR(NVL(patient.NAME, '~') || NVL(ward.NAME, '~') || NVL(dept.NAME, '~'), '考核') = 0
+  AND INSTR(NVL(patient.NAME, '~') || NVL(ward.NAME, '~') || NVL(dept.NAME, '~'), '演练') = 0
+  AND INSTR(UPPER(NVL(patient.NAME, '~') || NVL(ward.NAME, '~') || NVL(dept.NAME, '~')), 'CESHI') = 0
+  AND NVL(dept.CODE, '~') <> '001'
 """,
                 binds,
             )
