@@ -54,6 +54,10 @@ DEFAULT_RECEIVER_USERIDS = "215944441533346540,19303350101213213"
 ORACLE_USER = "HMISW2003"
 ORACLE_PASSWORD = "lmwzpwxw6287"
 ORACLE_DSN = "192.168.6.3:1521/feyy"
+DEFAULT_NEW_HIS_DSN = "WDHIS_KT/kingthis#Fe0726@172.16.99.26:1521/feyy"
+
+NEW_HIS_DAILY_START = dt.date(2026, 7, 26)
+NEW_HIS_OUTPATIENT_START = dt.date(2026, 7, 27)
 
 
 SURGERY_SQL = r"""
@@ -202,6 +206,184 @@ ORDER BY YQ
 """
 
 
+OLD_DELIVERY_EVENTS_SQL = r"""
+SELECT DISTINCT TRIM(a.ZYH) AS 住院号
+FROM ZYBRXX a
+JOIN KSMC b ON a.KSBH = b.NO
+WHERE TRUNC(a.CSRQ) = TO_DATE(:report_date, 'YYYY-MM-DD')
+  AND a.ZYH LIKE '%B1%'
+  AND b.MC NOT IN ('特需产科一体化中心（北）', '特需产科病区(南)')
+"""
+
+
+NEW_SURGERY_METRICS_SQL = r"""
+WITH valid_ops AS (
+    SELECT ops.REQUEST_NO,
+           ops.IS_AMBULATORY_SURGERY,
+           ops.BEGIN_TIME,
+           ops.END_TIME,
+           ops.FINISH_TIME
+    FROM WDHIS.CIS_OPS_REQUEST ops
+    JOIN WDHIS.CIS_IN_PAT_REG reg
+      ON reg.VISIT_ID = ops.REG_ID
+     AND reg.BRANCH_CODE = ops.BRANCH_CODE
+     AND NVL(reg.IS_INVALID, 0) = 0
+    JOIN WDHIS.PAT_REGISTER patient
+      ON patient.REG_ID = reg.VISIT_ID
+     AND patient.PAT_ID = reg.PAT_ID
+     AND patient.SOURCE_TYPE = 2
+     AND patient.BRANCH_CODE = reg.BRANCH_CODE
+     AND NVL(patient.IS_INVALID, 0) = 0
+    JOIN WDHIS.PUB_WARD ward ON ward.ID = reg.WARD_ID
+    JOIN WDHIS.PUB_EMP_INFO surgeon_info
+      ON surgeon_info.ID = ops.SURGEON_DOCTOR
+    LEFT JOIN WDHIS.PUB_WARD request_ward ON request_ward.ID = ops.REQ_WARD
+    LEFT JOIN WDHIS.PUB_EMP input_emp ON input_emp.ID = ops.INPUT_EMPID
+    LEFT JOIN WDHIS.PUB_EMP surgeon_emp ON surgeon_emp.ID = ops.SURGEON_DOCTOR
+    WHERE ops.SOURCE_TYPE = 2
+      AND ops.STATE IN (60, 80)
+      AND ops.INVALID_TIME IS NULL
+      AND ops.CANCEL_TIME IS NULL
+      AND ops.SURGEON_DOCTOR IS NOT NULL
+      AND ward.BRANCH_CODE IN ('00', '01')
+      AND EXISTS (
+          SELECT 1
+          FROM WDHIS.CIS_OPS_REQUEST_ITEM item
+          WHERE item.REQUEST_NO = ops.REQUEST_NO
+            AND item.INVALID_TIME IS NULL
+      )
+      AND INSTR(
+          NVL(patient.NAME, '~') || NVL(ward.NAME, '~') ||
+          NVL(request_ward.NAME, '~') || NVL(input_emp.NAME, '~') ||
+          NVL(surgeon_emp.NAME, '~'),
+          '测试'
+      ) = 0
+      AND INSTR(
+          NVL(patient.NAME, '~') || NVL(ward.NAME, '~') ||
+          NVL(request_ward.NAME, '~') || NVL(input_emp.NAME, '~') ||
+          NVL(surgeon_emp.NAME, '~'),
+          '考核'
+      ) = 0
+      AND INSTR(
+          NVL(patient.NAME, '~') || NVL(ward.NAME, '~') ||
+          NVL(request_ward.NAME, '~') || NVL(input_emp.NAME, '~') ||
+          NVL(surgeon_emp.NAME, '~'),
+          '演练'
+      ) = 0
+      AND NVL(input_emp.CODE, '~') <> '999'
+      AND NVL(surgeon_emp.CODE, '~') <> '999'
+)
+SELECT
+    COUNT(DISTINCT CASE
+        WHEN END_TIME >= TO_DATE(:report_date, 'YYYY-MM-DD')
+         AND END_TIME < TO_DATE(:report_date, 'YYYY-MM-DD') + 1
+        THEN REQUEST_NO
+    END) AS 手术量,
+    COUNT(DISTINCT CASE
+        WHEN IS_AMBULATORY_SURGERY = 1
+         AND COALESCE(BEGIN_TIME, END_TIME, FINISH_TIME)
+             >= TO_DATE(:report_date, 'YYYY-MM-DD')
+         AND COALESCE(BEGIN_TIME, END_TIME, FINISH_TIME)
+             < TO_DATE(:report_date, 'YYYY-MM-DD') + 1
+        THEN REQUEST_NO
+    END) AS 日间手术量
+FROM valid_ops
+"""
+
+
+NEW_DELIVERY_EVENTS_SQL = r"""
+SELECT DISTINCT TRIM(baby.VISIT_NO) AS 住院号
+FROM WDHIS.CIS_IN_PAT_REG baby
+JOIN WDHIS.PAT_REGISTER patient
+  ON patient.REG_ID = baby.VISIT_ID
+ AND patient.PAT_ID = baby.PAT_ID
+ AND patient.SOURCE_TYPE = 2
+ AND patient.BRANCH_CODE = baby.BRANCH_CODE
+ AND NVL(patient.IS_INVALID, 0) = 0
+JOIN WDHIS.PUB_WARD ward ON ward.ID = baby.WARD_ID
+JOIN WDHIS.PUB_DEPT dept ON dept.ID = baby.DEPT_ID
+WHERE patient.DATE_OF_BIRTH >= TO_DATE(:report_date, 'YYYY-MM-DD')
+  AND patient.DATE_OF_BIRTH < TO_DATE(:report_date, 'YYYY-MM-DD') + 1
+  AND NVL(baby.IS_INVALID, 0) = 0
+  AND TRIM(baby.VISIT_NO) NOT LIKE '0%'
+  AND TRIM(baby.VISIT_NO) NOT LIKE '-%'
+  AND TRIM(baby.VISIT_NO) LIKE '%B1%'
+  AND ward.BRANCH_CODE IN ('00', '01')
+  AND dept.NAME NOT IN ('特需产科一体化中心（北）', '特需产科病区(南)')
+"""
+
+
+NEW_BED_USAGE_SQL = r"""
+WITH bed_usage AS (
+    SELECT ward.CODE AS BQH,
+           ward.NAME AS BQ,
+           dept.CODE AS KSBH,
+           dept.NAME AS KS,
+           NVL(stats.NOW_COUNT, 0) + NVL(stats.TODAY_IN_OUT_NUM, 0) AS SJCW
+    FROM WDHIS.PUB_IN_PAT_STATISTICS stats
+    JOIN WDHIS.PUB_WARD ward ON ward.ID = stats.WARD_ID
+    JOIN WDHIS.PUB_DEPT dept ON dept.ID = stats.DEPT_ID
+    WHERE stats.STATISTICS_DATE >= TO_DATE(:report_date, 'YYYY-MM-DD')
+      AND stats.STATISTICS_DATE < TO_DATE(:report_date, 'YYYY-MM-DD') + 1
+      AND ward.BRANCH_CODE IN ('00', '01')
+)
+SELECT
+    NVL(SUM(SJCW), 0) AS 全院床位使用,
+    NVL(SUM(CASE
+        WHEN KSBH = '403' OR BQ LIKE '%儿童重症%' OR KS LIKE '%儿童重症%'
+        THEN SJCW ELSE 0
+    END), 0) AS PICU床位使用,
+    NVL(SUM(CASE
+        WHEN KSBH = '132' OR BQ LIKE '%新生儿重症%' OR KS LIKE '%新生儿重症%'
+        THEN SJCW ELSE 0
+    END), 0) AS NICU床位使用,
+    NVL(SUM(CASE
+        WHEN KSBH = '347'
+          OR BQ LIKE '%小儿监护(北)%'
+          OR BQ LIKE '%(北)小儿监护%'
+          OR KS LIKE '%监护病区(北)%'
+        THEN SJCW ELSE 0
+    END), 0) AS 北监护床位使用,
+    NVL(SUM(CASE
+        WHEN KSBH = '513' OR BQ LIKE '%外二心胸外科%' OR KS LIKE '%外二心胸外科%'
+        THEN SJCW ELSE 0
+    END), 0) AS 外二心胸外科床位使用
+FROM bed_usage
+"""
+
+
+NEW_OUTPATIENT_SQL = r"""
+SELECT CASE reg.BRANCH_CODE
+           WHEN '00' THEN '南院'
+           WHEN '01' THEN '北院'
+       END AS 院区,
+       SUM(CASE WHEN reg_type.CODE <> '114' THEN 1 ELSE 0 END) AS 门急诊量,
+       SUM(CASE
+           WHEN NVL(reg.IS_EME, 0) = 1
+             OR NVL(reg_type.IS_EME, 0) = 1
+             OR reg_type.NAME LIKE '%急%'
+           THEN 1 ELSE 0
+       END) AS 急诊量
+FROM WDHIS.OIS_REG_INFO reg
+JOIN WDHIS.PAT_REGISTER patient
+  ON patient.REG_ID = reg.OPC_ID
+ AND patient.SOURCE_TYPE = 1
+ AND patient.BRANCH_CODE = reg.BRANCH_CODE
+ AND NVL(patient.IS_INVALID, 0) = 0
+ AND TRIM(patient.PAT_NO) IS NOT NULL
+JOIN WDHIS.PUB_DIC_REG_TYPE reg_type ON reg_type.ID = reg.REG_TYPE
+WHERE reg.REG_DATE >= TO_DATE(:report_date, 'YYYY-MM-DD')
+  AND reg.REG_DATE < TO_DATE(:report_date, 'YYYY-MM-DD') + 1
+  AND reg.BRANCH_CODE IN ('00', '01')
+  AND reg.INVALID_EMPID IS NULL
+  AND reg.INVALID_TIME IS NULL
+  AND NVL(reg.IS_BACK, 0) = 0
+  AND reg.REG_DEPT <> 0
+GROUP BY reg.BRANCH_CODE
+ORDER BY CASE reg.BRANCH_CODE WHEN '01' THEN 0 ELSE 1 END
+"""
+
+
 class PushError(RuntimeError):
     pass
 
@@ -254,25 +436,120 @@ def fetch_all_dicts(conn: oracledb.Connection, sql: str, report_date: str) -> li
         return [dict(zip(columns, row)) for row in cursor.fetchall()]
 
 
-def query_report(report_date: str) -> dict[str, Any]:
-    with oracledb.connect(user=ORACLE_USER, password=ORACLE_PASSWORD, dsn=ORACLE_DSN) as conn:
-        log("查询手术量/分娩量/日间手术量")
-        surgery = fetch_one_dict(conn, SURGERY_SQL, report_date)
+def fetch_visit_no_set(
+    conn: oracledb.Connection,
+    sql: str,
+    report_date: str,
+) -> set[str]:
+    rows = fetch_all_dicts(conn, sql, report_date)
+    return {
+        str(row["住院号"]).strip()
+        for row in rows
+        if row.get("住院号") is not None and str(row["住院号"]).strip()
+    }
 
-        log("查询床位使用")
-        bed_usage = fetch_one_dict(conn, BED_USAGE_SQL, report_date)
 
-        log("查询南北院门急诊量/急诊量")
-        outpatient_rows = fetch_all_dicts(conn, OUTPATIENT_SQL, report_date)
+def fetch_authoritative_new_his_visit_nos(
+    conn: oracledb.Connection,
+    visit_nos: set[str],
+) -> set[str]:
+    normalized = sorted({str(value).strip() for value in visit_nos if str(value).strip()})
+    result: set[str] = set()
+    with conn.cursor() as cursor:
+        for offset in range(0, len(normalized), 800):
+            chunk = normalized[offset:offset + 800]
+            binds = {f"visit_no_{index}": value for index, value in enumerate(chunk)}
+            placeholders = ", ".join(f":{name}" for name in binds)
+            cursor.execute(
+                f"""
+SELECT TRIM(VISIT_NO)
+FROM WDHIS.CIS_IN_PAT_REG
+WHERE NVL(IS_INVALID, 0) = 0
+  AND BRANCH_CODE IN ('00', '01')
+  AND TRIM(VISIT_NO) IN ({placeholders})
+""",
+                binds,
+            )
+            result.update(
+                str(row[0]).strip()
+                for row in cursor
+                if row[0] is not None and str(row[0]).strip()
+            )
+    return result
+
+
+def query_report(report_date: str, new_his_dsn: str = DEFAULT_NEW_HIS_DSN) -> dict[str, Any]:
+    report_day = dt.datetime.strptime(report_date, "%Y-%m-%d").date()
+    old_surgery: dict[str, Any] = {}
+    new_surgery: dict[str, Any] = {}
+    old_delivery_visits: set[str] = set()
+    new_delivery_visits: set[str] = set()
+    authoritative_new_visits: set[str] = set()
+    bed_usage: dict[str, Any] = {}
+    outpatient_rows: list[dict[str, Any]] = []
+
+    if report_day < NEW_HIS_OUTPATIENT_START:
+        log("查询老 HIS 医务科每日上报数据")
+        with oracledb.connect(user=ORACLE_USER, password=ORACLE_PASSWORD, dsn=ORACLE_DSN) as conn:
+            old_surgery = fetch_one_dict(conn, SURGERY_SQL, report_date)
+            if report_day == NEW_HIS_DAILY_START:
+                old_delivery_visits = fetch_visit_no_set(
+                    conn,
+                    OLD_DELIVERY_EVENTS_SQL,
+                    report_date,
+                )
+            if report_day < NEW_HIS_DAILY_START:
+                bed_usage = fetch_one_dict(conn, BED_USAGE_SQL, report_date)
+            outpatient_rows = fetch_all_dicts(conn, OUTPATIENT_SQL, report_date)
+
+    if report_day >= NEW_HIS_DAILY_START:
+        log("查询新 HIS 医务科每日上报数据")
+        with oracledb.connect(new_his_dsn, disable_oob=True) as conn:
+            new_surgery = fetch_one_dict(conn, NEW_SURGERY_METRICS_SQL, report_date)
+            new_delivery_visits = fetch_visit_no_set(
+                conn,
+                NEW_DELIVERY_EVENTS_SQL,
+                report_date,
+            )
+            bed_usage = fetch_one_dict(conn, NEW_BED_USAGE_SQL, report_date)
+            if report_day == NEW_HIS_DAILY_START:
+                authoritative_new_visits = fetch_authoritative_new_his_visit_nos(
+                    conn,
+                    old_delivery_visits,
+                )
+            if report_day >= NEW_HIS_OUTPATIENT_START:
+                outpatient_rows = fetch_all_dicts(conn, NEW_OUTPATIENT_SQL, report_date)
+
+    if report_day < NEW_HIS_DAILY_START:
+        surgery_total = to_int(old_surgery.get("手术量"))
+        delivery_total = to_int(old_surgery.get("分娩量"))
+        day_surgery_total = to_int(old_surgery.get("日间手术量"))
+    elif report_day == NEW_HIS_DAILY_START:
+        surgery_total = (
+            to_int(old_surgery.get("手术量"))
+            + to_int(new_surgery.get("手术量"))
+        )
+        delivery_total = len(
+            (old_delivery_visits - authoritative_new_visits)
+            | new_delivery_visits
+        )
+        day_surgery_total = (
+            to_int(old_surgery.get("日间手术量"))
+            + to_int(new_surgery.get("日间手术量"))
+        )
+    else:
+        surgery_total = to_int(new_surgery.get("手术量"))
+        delivery_total = len(new_delivery_visits)
+        day_surgery_total = to_int(new_surgery.get("日间手术量"))
 
     outpatient_total = sum(to_int(row.get("门急诊量")) for row in outpatient_rows)
     emergency_total = sum(to_int(row.get("急诊量")) for row in outpatient_rows)
 
     return {
         "日期": report_date,
-        "手术量": to_int(surgery.get("手术量")),
-        "分娩量": to_int(surgery.get("分娩量")),
-        "日间手术量": to_int(surgery.get("日间手术量")),
+        "手术量": surgery_total,
+        "分娩量": delivery_total,
+        "日间手术量": day_surgery_total,
         "全院床位使用": to_int(bed_usage.get("全院床位使用")),
         "PICU床位使用": to_int(bed_usage.get("PICU床位使用")),
         "NICU床位使用": to_int(bed_usage.get("NICU床位使用")),
@@ -386,7 +663,7 @@ def run_once(args: argparse.Namespace) -> dict[str, Any]:
     # 去重保持顺序
     userids = list(dict.fromkeys(userids))
 
-    report = query_report(report_date)
+    report = query_report(report_date, args.new_his_dsn)
     message = build_message(report)
 
     print("\n" + message + "\n", flush=True)
@@ -404,6 +681,11 @@ def run_once(args: argparse.Namespace) -> dict[str, Any]:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="医务科每日上报数据钉钉推送")
     parser.add_argument("--date", default=None, help="统计日期 YYYY-MM-DD；默认昨天")
+    parser.add_argument(
+        "--new-his-dsn",
+        default=os.environ.get("NEW_HIS_DSN") or DEFAULT_NEW_HIS_DSN,
+        help="新 HIS 只读 Oracle DSN",
+    )
     parser.add_argument("--userid", dest="userids", action="append", default=[], help="钉钉接收人 userid；可重复，或逗号分隔。默认写死为脚本内 DEFAULT_RECEIVER_USERIDS")
     parser.add_argument("--dry-run", action="store_true", help="只查询并打印，不发送钉钉")
     parser.add_argument("--json", action="store_true", help="结束时输出 JSON 结果")
