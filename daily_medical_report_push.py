@@ -332,7 +332,13 @@ WITH bed_usage AS (
            ward.NAME AS BQ,
            dept.CODE AS KSBH,
            dept.NAME AS KS,
-           NVL(stats.NOW_COUNT, 0) + NVL(stats.TODAY_IN_OUT_NUM, 0) AS SJCW
+           NVL(
+               REGEXP_COUNT(
+                   DBMS_LOB.SUBSTR(stats.CURRENT_PAT_DETAIL, 32767, 1),
+                   '[^,]+'
+               ),
+               0
+           ) + NVL(stats.TODAY_IN_OUT_NUM, 0) AS SJCW
     FROM WDHIS.PUB_IN_PAT_STATISTICS stats
     JOIN WDHIS.PUB_WARD ward ON ward.ID = stats.WARD_ID
     JOIN WDHIS.PUB_DEPT dept ON dept.ID = stats.DEPT_ID
