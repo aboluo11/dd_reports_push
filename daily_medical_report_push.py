@@ -238,6 +238,7 @@ WITH valid_ops AS (
     JOIN WDHIS.PUB_EMP_INFO surgeon_info
       ON surgeon_info.ID = ops.SURGEON_DOCTOR
     LEFT JOIN WDHIS.PUB_WARD request_ward ON request_ward.ID = ops.REQ_WARD
+    LEFT JOIN WDHIS.PUB_EMP reg_record_emp ON reg_record_emp.ID = reg.REG_EMPID
     LEFT JOIN WDHIS.PUB_EMP input_emp ON input_emp.ID = ops.INPUT_EMPID
     LEFT JOIN WDHIS.PUB_EMP surgeon_emp ON surgeon_emp.ID = ops.SURGEON_DOCTOR
     WHERE ops.SOURCE_TYPE = 2
@@ -254,30 +255,32 @@ WITH valid_ops AS (
       )
       AND INSTR(
           NVL(patient.NAME, '~') || NVL(ward.NAME, '~') ||
-          NVL(request_ward.NAME, '~') || NVL(input_emp.NAME, '~') ||
-          NVL(surgeon_emp.NAME, '~'),
+          NVL(request_ward.NAME, '~') || NVL(reg_record_emp.NAME, '~') ||
+          NVL(input_emp.NAME, '~') || NVL(surgeon_emp.NAME, '~'),
           '测试'
       ) = 0
       AND INSTR(
           NVL(patient.NAME, '~') || NVL(ward.NAME, '~') ||
-          NVL(request_ward.NAME, '~') || NVL(input_emp.NAME, '~') ||
-          NVL(surgeon_emp.NAME, '~'),
+          NVL(request_ward.NAME, '~') || NVL(reg_record_emp.NAME, '~') ||
+          NVL(input_emp.NAME, '~') || NVL(surgeon_emp.NAME, '~'),
           '考核'
       ) = 0
       AND INSTR(
           NVL(patient.NAME, '~') || NVL(ward.NAME, '~') ||
-          NVL(request_ward.NAME, '~') || NVL(input_emp.NAME, '~') ||
-          NVL(surgeon_emp.NAME, '~'),
+          NVL(request_ward.NAME, '~') || NVL(reg_record_emp.NAME, '~') ||
+          NVL(input_emp.NAME, '~') || NVL(surgeon_emp.NAME, '~'),
           '演练'
       ) = 0
       AND INSTR(
           UPPER(
               NVL(patient.NAME, '~') || NVL(ward.NAME, '~') ||
-              NVL(request_ward.NAME, '~') || NVL(input_emp.NAME, '~') ||
-              NVL(surgeon_emp.NAME, '~')
+              NVL(request_ward.NAME, '~') || NVL(reg_record_emp.NAME, '~') ||
+              NVL(input_emp.NAME, '~') || NVL(surgeon_emp.NAME, '~')
           ),
           'CESHI'
       ) = 0
+      AND NVL(reg.REG_EMPID, -1) <> 999
+      AND NVL(reg_record_emp.CODE, '~') <> '999'
       AND NVL(input_emp.CODE, '~') <> '999'
       AND NVL(surgeon_emp.CODE, '~') <> '999'
 )
@@ -310,6 +313,7 @@ JOIN WDHIS.PAT_REGISTER patient
  AND NVL(patient.IS_INVALID, 0) = 0
 JOIN WDHIS.PUB_WARD ward ON ward.ID = baby.WARD_ID
 JOIN WDHIS.PUB_DEPT dept ON dept.ID = baby.DEPT_ID
+LEFT JOIN WDHIS.PUB_EMP reg_record_emp ON reg_record_emp.ID = baby.REG_EMPID
 WHERE patient.DATE_OF_BIRTH >= TO_DATE(:report_date, 'YYYY-MM-DD')
   AND patient.DATE_OF_BIRTH < TO_DATE(:report_date, 'YYYY-MM-DD') + 1
   AND NVL(baby.IS_INVALID, 0) = 0
@@ -318,27 +322,27 @@ WHERE patient.DATE_OF_BIRTH >= TO_DATE(:report_date, 'YYYY-MM-DD')
   AND TRIM(baby.VISIT_NO) LIKE '%B1%'
   AND ward.BRANCH_CODE IN ('00', '01')
   AND dept.NAME NOT IN ('特需产科一体化中心（北）', '特需产科病区(南)')
-  AND INSTR(NVL(patient.NAME, '~') || NVL(ward.NAME, '~') || NVL(dept.NAME, '~'), '测试') = 0
-  AND INSTR(NVL(patient.NAME, '~') || NVL(ward.NAME, '~') || NVL(dept.NAME, '~'), '考核') = 0
-  AND INSTR(NVL(patient.NAME, '~') || NVL(ward.NAME, '~') || NVL(dept.NAME, '~'), '演练') = 0
-  AND INSTR(UPPER(NVL(patient.NAME, '~') || NVL(ward.NAME, '~') || NVL(dept.NAME, '~')), 'CESHI') = 0
+  AND INSTR(NVL(patient.NAME, '~') || NVL(ward.NAME, '~') || NVL(dept.NAME, '~') || NVL(reg_record_emp.NAME, '~'), '测试') = 0
+  AND INSTR(NVL(patient.NAME, '~') || NVL(ward.NAME, '~') || NVL(dept.NAME, '~') || NVL(reg_record_emp.NAME, '~'), '考核') = 0
+  AND INSTR(NVL(patient.NAME, '~') || NVL(ward.NAME, '~') || NVL(dept.NAME, '~') || NVL(reg_record_emp.NAME, '~'), '演练') = 0
+  AND INSTR(UPPER(NVL(patient.NAME, '~') || NVL(ward.NAME, '~') || NVL(dept.NAME, '~') || NVL(reg_record_emp.NAME, '~')), 'CESHI') = 0
   AND NVL(dept.CODE, '~') <> '001'
+  AND NVL(baby.REG_EMPID, -1) <> 999
+  AND NVL(reg_record_emp.CODE, '~') <> '999'
 """
 
 
 NEW_BED_USAGE_SQL = r"""
-WITH bed_usage AS (
-    SELECT ward.CODE AS BQH,
+WITH statistics_rows AS (
+    SELECT ROWIDTOCHAR(stats.ROWID) AS SOURCE_ROWID,
+           ward.CODE AS BQH,
            ward.NAME AS BQ,
            dept.CODE AS KSBH,
            dept.NAME AS KS,
-           NVL(
-               REGEXP_COUNT(
-                   DBMS_LOB.SUBSTR(stats.CURRENT_PAT_DETAIL, 32767, 1),
-                   '[^,]+'
-               ),
-               0
-           ) + NVL(stats.TODAY_IN_OUT_NUM, 0) AS SJCW
+           DBMS_LOB.SUBSTR(stats.CURRENT_PAT_DETAIL, 32767, 1) AS CURRENT_PAT_DETAIL,
+           DBMS_LOB.SUBSTR(stats.IN_PAT_DETAIL, 32767, 1) AS IN_PAT_DETAIL,
+           DBMS_LOB.SUBSTR(stats.OUT_PAT_DETAIL, 32767, 1) AS OUT_PAT_DETAIL,
+           stats.TODAY_IN_OUT_NUM
     FROM WDHIS.PUB_IN_PAT_STATISTICS stats
     JOIN WDHIS.PUB_WARD ward ON ward.ID = stats.WARD_ID
     JOIN WDHIS.PUB_DEPT dept ON dept.ID = stats.DEPT_ID
@@ -350,6 +354,92 @@ WITH bed_usage AS (
       AND INSTR(NVL(ward.NAME, '~') || NVL(dept.NAME, '~'), '演练') = 0
       AND INSTR(UPPER(NVL(ward.NAME, '~') || NVL(dept.NAME, '~')), 'CESHI') = 0
       AND NVL(dept.CODE, '~') <> '001'
+),
+bed_occurrences AS (
+    SELECT source.SOURCE_ROWID,
+           detail.VISIT_ID
+    FROM statistics_rows source
+    CROSS APPLY (
+        SELECT TO_NUMBER(
+                   REGEXP_SUBSTR(source.CURRENT_PAT_DETAIL, '[^,]+', 1, LEVEL)
+               ) AS VISIT_ID
+        FROM DUAL
+        CONNECT BY LEVEL <= REGEXP_COUNT(source.CURRENT_PAT_DETAIL, '[^,]+')
+    ) detail
+
+    UNION ALL
+
+    SELECT source.SOURCE_ROWID,
+           detail.VISIT_ID
+    FROM statistics_rows source
+    CROSS APPLY (
+        SELECT TO_NUMBER(
+                   REGEXP_SUBSTR(source.IN_PAT_DETAIL, '[^,]+', 1, LEVEL)
+               ) AS VISIT_ID
+        FROM DUAL
+        CONNECT BY LEVEL <= REGEXP_COUNT(source.IN_PAT_DETAIL, '[^,]+')
+    ) detail
+    WHERE INSTR(
+        ',' || NVL(source.OUT_PAT_DETAIL, '') || ',',
+        ',' || TO_CHAR(detail.VISIT_ID) || ','
+    ) > 0
+),
+test_visits AS (
+    SELECT DISTINCT reg.VISIT_ID
+    FROM bed_occurrences occurrence
+    JOIN WDHIS.CIS_IN_PAT_REG reg ON reg.VISIT_ID = occurrence.VISIT_ID
+    JOIN WDHIS.PAT_REGISTER patient
+      ON patient.REG_ID = reg.VISIT_ID
+     AND patient.PAT_ID = reg.PAT_ID
+     AND patient.SOURCE_TYPE = 2
+     AND patient.BRANCH_CODE = reg.BRANCH_CODE
+    LEFT JOIN WDHIS.PUB_EMP reg_emp ON reg_emp.ID = reg.REG_EMPID
+    LEFT JOIN WDHIS.PUB_WARD current_ward ON current_ward.ID = reg.WARD_ID
+    LEFT JOIN WDHIS.PUB_DEPT current_dept ON current_dept.ID = reg.DEPT_ID
+    WHERE INSTR(
+        NVL(patient.NAME, '~') || NVL(current_ward.NAME, '~') ||
+        NVL(current_dept.NAME, '~') || NVL(reg_emp.NAME, '~'),
+        '测试'
+    ) > 0
+       OR INSTR(
+        NVL(patient.NAME, '~') || NVL(current_ward.NAME, '~') ||
+        NVL(current_dept.NAME, '~') || NVL(reg_emp.NAME, '~'),
+        '考核'
+    ) > 0
+       OR INSTR(
+        NVL(patient.NAME, '~') || NVL(current_ward.NAME, '~') ||
+        NVL(current_dept.NAME, '~') || NVL(reg_emp.NAME, '~'),
+        '演练'
+    ) > 0
+       OR INSTR(
+        UPPER(
+            NVL(patient.NAME, '~') || NVL(current_ward.NAME, '~') ||
+            NVL(current_dept.NAME, '~') || NVL(reg_emp.NAME, '~')
+        ),
+        'CESHI'
+    ) > 0
+       OR NVL(current_dept.CODE, '~') = '001'
+       OR NVL(reg_emp.CODE, '~') = '999'
+       OR NVL(reg.REG_EMPID, -1) = 999
+),
+test_adjustments AS (
+    SELECT occurrence.SOURCE_ROWID,
+           COUNT(*) AS TEST_BED_DAYS
+    FROM bed_occurrences occurrence
+    JOIN test_visits test_visit ON test_visit.VISIT_ID = occurrence.VISIT_ID
+    GROUP BY occurrence.SOURCE_ROWID
+),
+bed_usage AS (
+    SELECT source.BQH,
+           source.BQ,
+           source.KSBH,
+           source.KS,
+           NVL(REGEXP_COUNT(source.CURRENT_PAT_DETAIL, '[^,]+'), 0)
+             + NVL(source.TODAY_IN_OUT_NUM, 0)
+             - NVL(adjustment.TEST_BED_DAYS, 0) AS SJCW
+    FROM statistics_rows source
+    LEFT JOIN test_adjustments adjustment
+      ON adjustment.SOURCE_ROWID = source.SOURCE_ROWID
 )
 SELECT
     NVL(SUM(SJCW), 0) AS 全院床位使用,
@@ -536,14 +626,17 @@ JOIN WDHIS.PAT_REGISTER patient
  AND NVL(patient.IS_INVALID, 0) = 0
 JOIN WDHIS.PUB_WARD ward ON ward.ID = reg.WARD_ID
 JOIN WDHIS.PUB_DEPT dept ON dept.ID = reg.DEPT_ID
+LEFT JOIN WDHIS.PUB_EMP reg_record_emp ON reg_record_emp.ID = reg.REG_EMPID
 WHERE NVL(reg.IS_INVALID, 0) = 0
   AND reg.BRANCH_CODE IN ('00', '01')
   AND TRIM(reg.VISIT_NO) IN ({placeholders})
-  AND INSTR(NVL(patient.NAME, '~') || NVL(ward.NAME, '~') || NVL(dept.NAME, '~'), '测试') = 0
-  AND INSTR(NVL(patient.NAME, '~') || NVL(ward.NAME, '~') || NVL(dept.NAME, '~'), '考核') = 0
-  AND INSTR(NVL(patient.NAME, '~') || NVL(ward.NAME, '~') || NVL(dept.NAME, '~'), '演练') = 0
-  AND INSTR(UPPER(NVL(patient.NAME, '~') || NVL(ward.NAME, '~') || NVL(dept.NAME, '~')), 'CESHI') = 0
+  AND INSTR(NVL(patient.NAME, '~') || NVL(ward.NAME, '~') || NVL(dept.NAME, '~') || NVL(reg_record_emp.NAME, '~'), '测试') = 0
+  AND INSTR(NVL(patient.NAME, '~') || NVL(ward.NAME, '~') || NVL(dept.NAME, '~') || NVL(reg_record_emp.NAME, '~'), '考核') = 0
+  AND INSTR(NVL(patient.NAME, '~') || NVL(ward.NAME, '~') || NVL(dept.NAME, '~') || NVL(reg_record_emp.NAME, '~'), '演练') = 0
+  AND INSTR(UPPER(NVL(patient.NAME, '~') || NVL(ward.NAME, '~') || NVL(dept.NAME, '~') || NVL(reg_record_emp.NAME, '~')), 'CESHI') = 0
   AND NVL(dept.CODE, '~') <> '001'
+  AND NVL(reg.REG_EMPID, -1) <> 999
+  AND NVL(reg_record_emp.CODE, '~') <> '999'
 """,
                 binds,
             )
