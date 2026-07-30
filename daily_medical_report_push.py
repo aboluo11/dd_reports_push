@@ -349,6 +349,7 @@ WITH statistics_rows AS (
     WHERE stats.STATISTICS_DATE >= TO_DATE(:report_date, 'YYYY-MM-DD')
       AND stats.STATISTICS_DATE < TO_DATE(:report_date, 'YYYY-MM-DD') + 1
       AND ward.BRANCH_CODE IN ('00', '01')
+      AND TRIM(ward.CODE) <> '21'
       AND INSTR(NVL(ward.NAME, '~') || NVL(dept.NAME, '~'), '测试') = 0
       AND INSTR(NVL(ward.NAME, '~') || NVL(dept.NAME, '~'), '考核') = 0
       AND INSTR(NVL(ward.NAME, '~') || NVL(dept.NAME, '~'), '演练') = 0
