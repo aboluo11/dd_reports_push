@@ -6,6 +6,7 @@ readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
     "oracledb>=4.0.0",
+    "psycopg[binary]>=3.2,<4",
     "pysocks>=1.7.1",
     "requests>=2.34.2",
 ]

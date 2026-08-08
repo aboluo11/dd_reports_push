@@ -28,6 +28,7 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 import requests
+import psycopg
 
 from async_process_runner import AsyncProcessRunner
 
@@ -58,6 +59,15 @@ DEFAULT_NEW_HIS_DSN = "WDHIS_KT/kingthis#Fe0726@172.16.99.26:1521/feyy"
 
 NEW_HIS_DAILY_START = dt.date(2026, 7, 26)
 NEW_HIS_OUTPATIENT_START = dt.date(2026, 7, 27)
+SELF_SNAPSHOT_START = dt.date(2026, 7, 27)
+
+BI_REPORTS_DB = {
+    'dbname': 'BI_reports',
+    'user': 'postgres',
+    'password': 'nbfeyy123',
+    'host': '172.16.0.81',
+    'port': '5432',
+}
 
 
 SURGERY_SQL = r"""
@@ -649,6 +659,52 @@ WHERE NVL(reg.IS_INVALID, 0) = 0
     return result
 
 
+def fetch_self_snapshot_bed_usage(report_date: str) -> dict[str, Any]:
+    sql = """
+SELECT COALESCE(SUM(snapshot.bed_usage), 0) AS "全院床位使用",
+       COALESCE(SUM(CASE
+           WHEN dept_code = '403'
+             OR ward_name LIKE '%%儿童重症%%'
+             OR dept_name LIKE '%%儿童重症%%'
+           THEN snapshot.bed_usage ELSE 0
+       END), 0) AS "PICU床位使用",
+       COALESCE(SUM(CASE
+           WHEN dept_code = '132'
+             OR ward_name LIKE '%%新生儿重症%%'
+             OR dept_name LIKE '%%新生儿重症%%'
+           THEN snapshot.bed_usage ELSE 0
+       END), 0) AS "NICU床位使用",
+       COALESCE(SUM(CASE
+           WHEN dept_code = '347'
+             OR ward_name LIKE '%%小儿监护(北)%%'
+             OR ward_name LIKE '%%(北)小儿监护%%'
+             OR dept_name LIKE '%%监护病区(北)%%'
+           THEN snapshot.bed_usage ELSE 0
+       END), 0) AS "北监护床位使用",
+       COALESCE(SUM(CASE
+           WHEN dept_code = '513'
+             OR ward_name LIKE '%%外二心胸外科%%'
+             OR dept_name LIKE '%%外二心胸外科%%'
+           THEN snapshot.bed_usage ELSE 0
+       END), 0) AS "外二心胸外科床位使用"
+FROM public.new_his_daily_inpatient_snapshot snapshot
+JOIN public.new_his_daily_inpatient_snapshot_run run
+  ON run.report_date = snapshot.report_date
+WHERE snapshot.report_date = %s
+"""
+    with psycopg.connect(**BI_REPORTS_DB) as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(sql, (report_date,))
+            columns = [description.name for description in cursor.description]
+            row = cursor.fetchone()
+    if row is None:
+        raise RuntimeError(f'{report_date} 自建住院结转尚未生成')
+    result = dict(zip(columns, row))
+    if to_int(result.get('全院床位使用')) <= 0:
+        raise RuntimeError(f'{report_date} 自建住院结转为空')
+    return result
+
+
 def query_report(report_date: str, new_his_dsn: str = DEFAULT_NEW_HIS_DSN) -> dict[str, Any]:
     report_day = dt.datetime.strptime(report_date, "%Y-%m-%d").date()
     old_surgery: dict[str, Any] = {}
@@ -682,7 +738,11 @@ def query_report(report_date: str, new_his_dsn: str = DEFAULT_NEW_HIS_DSN) -> di
                 NEW_DELIVERY_EVENTS_SQL,
                 report_date,
             )
-            bed_usage = fetch_one_dict(conn, NEW_BED_USAGE_SQL, report_date)
+            bed_usage = (
+                fetch_self_snapshot_bed_usage(report_date)
+                if report_day >= SELF_SNAPSHOT_START
+                else fetch_one_dict(conn, NEW_BED_USAGE_SQL, report_date)
+            )
             if report_day == NEW_HIS_DAILY_START:
                 authoritative_new_visits = fetch_authoritative_new_his_visit_nos(
                     conn,
